@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>YAMI PEDIDOS</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+      integrity="sha256-kLaT2GOSpHechhsozzB+flnD+zUyjE2LlfWPgU04xyI="
+      crossorigin="" />   
+  </head>
+
+  <body>
+    <div>
+        <h1>Pedidos YAMI</h1>
+    </div>
+    <div class="container">
+      <div class="map">
+        <div class="leaflet-map-container" id="mapContainer"></div>  
+    </div>
+    <div id="chat-container">
+        <h2>Chat</h2>
+        <div id="chat-messages"></div>
+        <form id="chat-form">
+          <input type="text" id="chat-input" placeholder="Escribe un mensaje..." />
+          <button type="submit">Enviar</button>
+        </form>
+    </div>
+    </div>
+    <div id="restaurants-container">    
+    </div>
+    <div>
+        <button onclick="toggleRestaurants()">Mostrar restaurantes</button>
+        <select id="restaurants" style="display:none"></select>
+    </div>
+    <div id="deliveries-info"></div>
+
+    <div class="demo">
+    </div>
+    <div id="delivery-info"></div>
+    <ul id="restaurant-list"></ul>
+
+  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.3/leaflet.js" integrity="sha512-Dqm3h1Y4qiHUjbhxTuBGQsza0Tfppn53SHlu/uj1f+RT+xfShfe7r6czRf5r2NmllO2aKx+tYJgoxboOkn1Scg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script  type='text/javascript'>
+
+        const redIcon = new L.Icon({
+            iconUrl:
+                "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
+            shadowUrl:
+                "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41]
+            });
+
+        const restaurantIcon = new L.Icon({
+            iconUrl: "restaurant.png",
+            iconSize: [25, ],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34]
+            });
+
+        const motoIcon = new L.Icon({
+            iconUrl: "moto.png",
+            iconSize: [25, ],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34]
+            });
+
+        var restaurants = {}
+        var destinations = {}
+        var motos = {}
+        const deliveries = {};
+        const markers = {};
+        const restaurantsInfo = {};
+        const restaurantNames = {};
+        const restaurantPosition = {};
+        const destinationNames = {};
+        const destinationPosition = {};
+        const chatMessages = document.getElementById("chat-messages");
+        
+        var map = L.map('mapContainer').setView([-33.35, -70.5], 10);
+
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        // Initialize the UI.
+        const demo = document.querySelector(".demo");
+
+        let url = "wss://tarea2-2023-1-dev-z2fqxmm2ja-uc.a.run.app/connect"
+        const websocket = new WebSocket(url);
+        payload = {
+            "type": "JOIN",
+            "payload": {
+                "authorization": 'dGxwY0B1Yy5jbDoxODY0MDAyOA=='
+            }
+        }
+        console.log(`Connecting to: ${url}. Sending: ${payload}`)
+        websocket.onopen = () => websocket.send(JSON.stringify(payload));
+        websocket.addEventListener("message", ({ data }) => {
+            const event = JSON.parse(data);
+            //demo.innerHTML = `Got <b>${event.type}</b> event:<br><br>${JSON.stringify(event.payload)}`;
+
+            if (event.type == 'RESTAURANTS') {
+                // recorremos los restaurantes y agregamos un marker para cada uno:
+                event.payload.forEach(r => {
+                    if (!(r.id in restaurants)) {
+                        restaurants[r.id] = r
+                        var marker = L.marker([r.position.lat, r.position.long], {icon: restaurantIcon})
+                        marker.bindTooltip(`Nombre: ${r.name}<br>Latitud: ${r.position.lat}<br>Longitud: ${r.position.long}`);
+                        marker.addTo(map);
+                        // puede ser util guardar la referencia al marker de cada restaurante
+                        r.marker = marker;
+                        restaurantNames[r.id] = r.name;
+                        restaurantPosition[r.id] = r.position;
+                    }
+                });
+                addRestaurants(restaurants); // llamar la función aquí
+            }           
+            else if (event.type == 'DESTINATIONS') {
+                // lo mismo para los destinos
+                event.payload.forEach(d => {
+                    if (!(d.id in destinations)) {
+                        destinations[d.id] = d
+                        var marker = L.marker([d.position.lat, d.position.long], {icon: redIcon})
+                        marker.bindTooltip(`Nombre: ${d.name}<br>Latitud: ${d.position.lat}<br>Longitud: ${d.position.long}`);
+                        marker.addTo(map);
+                        d.marker = marker;
+                        destinationNames[d.id] = d.name;
+                        destinationPosition[d.id] = d.position;
+                    }
+                });
+            }
+            
+            else if (event.type == 'DELIVERIES') {
+                // guardamos la información de entregas en la variable `deliveries`
+                event.payload.forEach(delivery => {
+                    deliveries[delivery.id] = delivery;
+                });
+
+                // creamos un string HTML con la información de entregas
+                let html = '<ul>';
+                Object.values(deliveries).forEach(delivery => {
+                    html += `<li> Restaurante que envia pedido: ${restaurantNames[delivery.restaurant_id]}   /   
+                        Lugar de destino pedido: ${destinationNames[delivery.destination_id]}</li>`;
+                });
+                html += '</ul>';
+
+
+                // mostramos la información de entregas en el elemento HTML
+                const deliveryInfo = document.querySelector("#delivery-info");
+                deliveryInfo.innerHTML = '<h2>Información de entregas activas</h2>' + html;
+                }
+
+
+            else if (event.type == 'POSITION') {
+                if (Array.isArray(event.payload)) {
+                    event.payload.forEach(m => {
+                    const position = m.position;
+                    const deliveryId = m.delivery_id;
+
+                    if (!(deliveryId in markers)) {
+                        const marker = L.marker([position.lat, position.long], {icon: motoIcon});
+                        marker.bindTooltip(deliveryId);
+                        marker.addTo(map);
+                        markers[deliveryId] = marker;
+                    } else {
+                        markers[deliveryId].setLatLng([position.lat, position.long]);
+                    }
+                    });
+                } else {
+                    const position = event.payload.position;
+                    const deliveryId = event.payload.delivery_id;
+
+                    if (!(deliveryId in markers)) {
+                    const marker = L.marker([position.lat, position.long], {icon: motoIcon});
+                    marker.bindTooltip(deliveryId);
+                    marker.addTo(map);
+                    markers[deliveryId] = marker;
+                    } else {
+                    markers[deliveryId].setLatLng([position.lat, position.long]);
+                    }
+                }
+                }
+
+        });
+        // esto fue necesario para resolver un bug de leaflet en el que parte del mapa se veía gris
+        setTimeout(function () {
+            window.dispatchEvent(new Event('resize'));
+        }, 500);
+
+        function toggleRestaurants() {
+            const restaurantSelect = document.querySelector("#restaurants");
+            restaurantSelect.style.display = "block";
+
+            // Agregamos una opción que diga "Elegir un restaurante" como primer elemento
+            const defaultOption = document.createElement("option");
+            defaultOption.value = "";
+            defaultOption.text = "Elegir un restaurante";
+            restaurantSelect.appendChild(defaultOption);
+
+            // Agregamos las opciones de los restaurantes
+            for (const [id, restaurant] of Object.entries(restaurants)) {
+                const option = document.createElement("option");
+                option.value = id;
+                option.text = restaurant.name;
+                restaurantSelect.appendChild(option);
+            }
+
+            restaurantSelect.addEventListener("change", (event) => {
+                const restaurantId = event.target.value;
+                const restaurant = restaurants[restaurantId];
+                if (restaurant) {
+                map.setView([restaurant.position.lat, restaurant.position.long], 15);
+                restaurant.marker.openPopup();
+                }
+            });
+            }
+            function addRestaurants(restaurants) {
+                const restaurantList = document.getElementById("restaurant-list");
+                restaurantList.innerHTML = ""; // vaciar la lista por si acaso
+                for (const id in restaurants) {
+                    const restaurant = restaurants[id];
+                    const li = document.createElement("li");
+                    
+                }
+            }
+
+        function updateDeliveryStatus(event) {
+        const payload = event.payload;
+        const deliveryId = payload.delivery_id;
+
+        if (!(deliveryId in deliveries)) {
+            deliveries[deliveryId] = payload;
+        } else {
+            deliveries[deliveryId].status = payload.status;
+        }
+
+        if (payload.status === "DELIVERED") {
+            markers[deliveryId].remove();
+            delete deliveries[deliveryId];
+        }
+
+        showDeliveriesInfo(); // Agregar esta línea
+        const chatMessage = `Delivery ${deliveryId}: ${payload.status}`;
+        const chatMessageDiv = document.createElement("div");
+        chatMessageDiv.innerHTML = chatMessage;
+        chatMessages.appendChild(chatMessageDiv);
+        }
+        function showDeliveries() {
+            const deliveriesInfo = document.getElementById("deliveries-info");
+            deliveriesInfo.innerHTML = "";
+            for (const id in deliveries) {
+                const delivery = deliveries[id];
+                const deliveryInfo = document.createElement("div");
+                deliveryInfo.innerHTML = `
+                <h3>Delivery ${id}</h3>
+                <p>Restaurante: ${delivery.restaurant.name}</p>
+                <p>Destino: ${delivery.destination.name}</p>
+                <p>Estado: ${delivery.status}</p>
+                `;
+                deliveriesInfo.appendChild(deliveryInfo);
+            }
+            }
+        function addDelivery(delivery) {
+            const id = delivery.id;
+            const restaurant_id = delivery.restaurant_id;
+            const destination_id = delivery.destination_id;
+            const moto_id = delivery.moto_id;
+
+            deliveries[id] = delivery;
+
+            const restaurant_name = restaurants[restaurant_id].name;
+            const destination_name = destinations[destination_id].name;
+            const moto_name = motos[moto_id].name;
+
+            const deliveryInfo = document.createElement("div");
+            
+            document.getElementById("deliveries-info").appendChild(deliveryInfo);
+            }
+            function updateDeliveriesList() {
+            const deliveriesList = document.getElementById("deliveries-list");
+            deliveriesList.innerHTML = "";
+            for (const deliveryId in deliveries) {
+                const delivery = deliveries[deliveryId];
+                const listItem = document.createElement("li");
+                const deliveryText = document.createTextNode(`Delivery ${delivery.id}: Restaurante ${delivery.restaurantId}, Destino ${delivery.destinationId}`);
+                listItem.appendChild(deliveryText);
+                deliveriesList.appendChild(listItem);
+            }
+            }
+
+
+
+        function addDeliveryInfo(delivery) {
+            const deliveryInfo = document.createElement("div");
+            deliveryInfo.innerHTML = `<h3>Delivery ${delivery.id}</h3>
+                                        <p>Restaurante: ${restaurants[delivery.restaurant_id].name}</p>
+                                        <p>Destino: ${destinations[delivery.destination_id].name}</p>
+                                        <p>Estado: ${delivery.status}</p>`;
+            const startDeliveryBtn = document.createElement("button");
+            startDeliveryBtn.innerText = "Comenzar delivery";
+            startDeliveryBtn.onclick = () => startDelivery(delivery.id);
+            deliveryInfo.appendChild(startDeliveryBtn);
+            document.getElementById("deliveries-info").appendChild(deliveryInfo);
+            }
+            
+            // función para mostrar los mensajes del chat en pantalla
+function displayChatMessage(message) {
+  const chatMessages = document.getElementById("chat-messages");
+  const messageDiv = document.createElement("div");
+  messageDiv.innerHTML = message;
+  chatMessages.appendChild(messageDiv);
+}
+
+// escuchar el evento submit del formulario de chat
+const chatForm = document.getElementById("chat-form");
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const chatInput = document.getElementById("chat-input");
+  const message = chatInput.value;
+  // enviar el mensaje a través del WebSocket
+  const payload = {
+    type: "CHAT",
+    payload: {
+      message: message,
+    },
+  };
+  websocket.send(JSON.stringify(payload));
+  // mostrar el mensaje en pantalla
+  displayChatMessage(`Yo: ${message}`);
+  // limpiar el input del formulario
+  chatInput.value = "";
+});
+
+// escuchar el evento message del WebSocket para recibir los mensajes del chat
+websocket.addEventListener("message", ({ data }) => {
+  const event = JSON.parse(data);
+  if (event.type === "CHAT") {
+    const message = event.payload.message;
+    displayChatMessage(`Mensaje de repartidor: ${message}`);
+  }
+});
+
+
+
+
+
+    </script>
+<style>
+        .container {
+            display: flex;
+        }
+        .map {
+        width: 72%;
+        height: 450px;
+        }
+        button {
+        clear: both;
+        }
+        .leaflet-map-container {
+        height: 450px;
+        max-height: none;
+        }
+        .demo {
+        padding-top: 20px
+        }
+        #chat-container {
+        width: 25%;
+        height: 425px;
+        float: right;
+        border: 3px solid #2e64c1;
+        padding: 10px;
+        }
+        #chat-messages {
+        height: 78%;
+        overflow-y: scroll;
+        }
+        #chat-form {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        }
+        #chat-input {
+        flex-grow: 1;
+        margin-right: 10px;
+        }
+        #restaurants-container {
+        margin-bottom: 20px;
+        }
+
+    </style>
+  </body>
+</html>
